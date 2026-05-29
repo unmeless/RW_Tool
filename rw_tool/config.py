@@ -10,6 +10,17 @@ DEFAULT_CONFIG_PATH = Path(__file__).resolve().parent.parent / "config.ini"
 @dataclass(frozen=True)
 class AppConfig:
     frequency_hz: float
+    ocr_idle_hz: float
+    skip_unchanged_frames: bool
+    onnx_num_threads: int
+    ui_gate_enabled: bool
+    ui_gate_profile_path: Path
+    ui_gate_match_threshold: float
+    ui_gate_record_min_match_score: float
+    ui_gate_max_samples: int
+    ui_gate_use_heuristic: bool
+    ui_gate_poll_hz: float
+    ui_gate_min_samples: int
     resize_border_px: int
     corner_handle_px: int
     drag_bar_height: int
@@ -64,6 +75,16 @@ class AppConfig:
     @property
     def interval_ms(self) -> int:
         hz = max(self.frequency_hz, 0.1)
+        return max(1, int(1000 / hz))
+
+    @property
+    def idle_interval_ms(self) -> int:
+        hz = max(self.ocr_idle_hz, 0.05)
+        return max(1, int(1000 / hz))
+
+    @property
+    def ui_gate_poll_interval_ms(self) -> int:
+        hz = max(self.ui_gate_poll_hz, 0.1)
         return max(1, int(1000 / hz))
 
     def icon_panel_width_for(self, slots: int | None = None) -> int:
@@ -159,10 +180,33 @@ def load_config(path: Path | None = None) -> AppConfig:
     debug_master = ocr.getboolean("debug", fallback=False)
     debug_enabled = debug_master or debug_save or debug_show
 
+    ui_gate_profile = cfg_path.parent / "ui_gate_profile.json"
+    ui_gate_enabled = ocr.getboolean("ui_gate_enabled", fallback=True)
+    ui_gate_match_threshold = float(ocr.get("ui_gate_match_threshold", "0.52"))
+    ui_gate_record_min = float(ocr.get("ui_gate_record_min_match_score", "58"))
+    ui_gate_max_samples = int(ocr.get("ui_gate_max_samples", "24"))
+    ui_gate_use_heuristic = ocr.getboolean("ui_gate_use_heuristic", fallback=True)
+    ui_gate_poll_hz = float(ocr.get("ui_gate_poll_hz", "2.0"))
+    ui_gate_min_samples = int(ocr.get("ui_gate_min_samples", "3"))
+    ui_gate_path = Path(ocr.get("ui_gate_profile_path", "ui_gate_profile.json"))
+    if not ui_gate_path.is_absolute():
+        ui_gate_profile = cfg_path.parent / ui_gate_path
+
     return AppConfig(
         config_path=cfg_path,
         debug_enabled=debug_enabled,
-        frequency_hz=float(ocr.get("frequency_hz", "1.0")),
+        frequency_hz=float(ocr.get("frequency_hz", "5.0")),
+        ocr_idle_hz=float(ocr.get("ocr_idle_hz", "1.0")),
+        skip_unchanged_frames=ocr.getboolean("skip_unchanged_frames", fallback=True),
+        onnx_num_threads=max(0, int(ocr.get("onnx_num_threads", "2"))),
+        ui_gate_enabled=ui_gate_enabled,
+        ui_gate_profile_path=ui_gate_profile,
+        ui_gate_match_threshold=ui_gate_match_threshold,
+        ui_gate_record_min_match_score=ui_gate_record_min,
+        ui_gate_max_samples=ui_gate_max_samples,
+        ui_gate_use_heuristic=ui_gate_use_heuristic,
+        ui_gate_poll_hz=ui_gate_poll_hz,
+        ui_gate_min_samples=ui_gate_min_samples,
         resize_border_px=int(window.get("resize_border_px", "16")),
         corner_handle_px=int(window.get("corner_handle_px", "22")),
         drag_bar_height=int(window.get("drag_bar_height", "26")),

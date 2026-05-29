@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import threading
 from typing import Literal
 
@@ -14,6 +15,21 @@ OcrLayout = Literal["auto", "strip"]
 # 首遍 OCR 足够好时跳过第二遍（game_ui + dual_preprocess）
 _DUAL_SKIP_MIN_CHARS = 12
 _DUAL_SKIP_MIN_CONF = 0.52
+
+
+def apply_onnx_thread_limit(num_threads: int) -> None:
+    """须在首次 import onnxruntime 之前调用。"""
+    if num_threads <= 0:
+        return
+    s = str(num_threads)
+    for key in (
+        "OMP_NUM_THREADS",
+        "MKL_NUM_THREADS",
+        "OPENBLAS_NUM_THREADS",
+        "NUMEXPR_NUM_THREADS",
+        "ORT_NUM_THREADS",
+    ):
+        os.environ.setdefault(key, s)
 
 
 def _box_sort_key(item) -> tuple[float, float]:
@@ -46,7 +62,9 @@ class OcrEngine:
         ocr_layout: str = "strip",
         ocr_strip_max_lines: int = 2,
         use_angle_cls: bool = False,
+        onnx_num_threads: int = 2,
     ) -> None:
+        apply_onnx_thread_limit(onnx_num_threads)
         self._backend = backend
         self._det_box_thresh = det_box_thresh
         self._text_score = text_score

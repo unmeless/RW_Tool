@@ -29,6 +29,8 @@ from rw_tool.frame_lock import (
     update_frame_lock_state,
 )
 from rw_tool.icon_panel_window import PetIconPanelWindow
+from rw_tool.image_preprocess import capture_fingerprint
+from rw_tool.ui_gate import UiGate
 from rw_tool.window_state import load_window_state, save_window_state, state_path_for_config
 from rw_tool.ocr_engine import OcrEngine
 from rw_tool.pet_matcher import MatchResult, PetMatcher
@@ -98,6 +100,7 @@ class OcrOverlayWindow(QWidget):
             ocr_layout=self.cfg.ocr_layout,
             ocr_strip_max_lines=self.cfg.ocr_strip_max_lines,
             use_angle_cls=self.cfg.ocr_use_angle_cls,
+            onnx_num_threads=self.cfg.onnx_num_threads,
         )
         threading.Thread(target=self._engine.prewarm, daemon=True).start()
 
@@ -116,6 +119,21 @@ class OcrOverlayWindow(QWidget):
         self._icon_panel: PetIconPanelWindow | None = None
         self._icon_panel_placed = False
         self._last_match_result: MatchResult | None = None
+        self._last_frame_fp: int | None = None
+        self._ui_gate_was_open = False
+        self._last_ocr_image: np.ndarray | None = None
+        self._ui_gate: UiGate | None = None
+        if self.cfg.ui_gate_enabled:
+            self._ui_gate = UiGate(
+                self.cfg.ui_gate_profile_path,
+                match_threshold=self.cfg.ui_gate_match_threshold,
+                record_min_match_score=self.cfg.ui_gate_record_min_match_score,
+                max_samples=self.cfg.ui_gate_max_samples,
+                use_heuristic=self.cfg.ui_gate_use_heuristic,
+                min_samples_to_gate=self.cfg.ui_gate_min_samples,
+            )
+            if self._ui_gate.sample_count:
+                print(f"[RW_Tool] UI 门控已加载 {self._ui_gate.sample_count} 条样本")
         self._lock_hub = FrameLockHub()
         self._alt_monitor: AltKeyMonitor | None = None
         self._match_label: QLabel | None = None
@@ -548,6 +566,16 @@ class OcrOverlayWindow(QWidget):
         self._ocr_tick_timer.stop()
         self._ocr_tick_timer.start(max(0, delay_ms))
 
+    def _next_ocr_delay_ms(self, *, skipped_unchanged: bool = False) -> int:
+        """匹配置信且画面稳定时降频，降低 CPU。"""
+        confident = (
+            self._last_match_result is not None
+            and self._last_match_result.confident
+        )
+        if skipped_unchanged or confident:
+            return self.cfg.idle_interval_ms
+        return self.cfg.interval_ms
+
     def _pause_ocr_timer(self) -> None:
         if hasattr(self, "_ocr_tick_timer"):
             self._ocr_tick_timer.stop()
@@ -559,7 +587,7 @@ class OcrOverlayWindow(QWidget):
     def _resume_ocr_timer(self) -> None:
         if self._interacting:
             return
-        self._schedule_ocr_tick(self.cfg.interval_ms)
+        self._schedule_ocr_tick(self._next_ocr_delay_ms())
 
     def _begin_interaction(self) -> None:
         if self._interacting:
@@ -571,6 +599,7 @@ class OcrOverlayWindow(QWidget):
         if not self._interacting:
             return
         self._interacting = False
+        self._last_frame_fp = None
         self._resume_ocr_timer_delayed()
 
     @property
@@ -881,6 +910,27 @@ class OcrOverlayWindow(QWidget):
                 self._result_label.setText("（截屏失败：请安装 mss 或检查显示缩放）")
             self._schedule_ocr_tick(self.cfg.interval_ms)
             return
+
+        if self._ui_gate is not None:
+            run_ocr, _score, reason = self._ui_gate.should_run_ocr(image)
+            if not run_ocr:
+                if self._ui_gate_was_open:
+                    self._update_icon_panel(None)
+                    self._last_match_result = None
+                self._ui_gate_was_open = False
+                self._last_frame_fp = None
+                self._schedule_ocr_tick(self.cfg.ui_gate_poll_interval_ms)
+                return
+            self._ui_gate_was_open = True
+
+        if self.cfg.skip_unchanged_frames:
+            fp = capture_fingerprint(image)
+            if self._last_frame_fp is not None and fp == self._last_frame_fp:
+                self._schedule_ocr_tick(self._next_ocr_delay_ms(skipped_unchanged=True))
+                return
+            self._last_frame_fp = fp
+
+        self._last_ocr_image = image.copy()
         self._ocr_busy = True
         worker = OcrWorker(self, self._engine, image)
         self._worker = worker
@@ -905,6 +955,18 @@ class OcrOverlayWindow(QWidget):
         result = self._matcher.match(raw)
         self._last_match_result = result
         self._update_icon_panel(result)
+        if (
+            self._ui_gate is not None
+            and result.confident
+            and result.best is not None
+            and self._last_ocr_image is not None
+        ):
+            if self._ui_gate.record_success(
+                self._last_ocr_image,
+                match_score=result.best.score,
+                pet_name=result.best.name,
+            ):
+                print(f"[RW_Tool] UI 门控记录样本 ({result.best.name}, {result.best.score:.0f}%)")
         if self._match_label is not None and self._result_label is not None:
             self._match_label.setText(result.format_match_list())
             if self.cfg.match_show_ocr:
@@ -914,7 +976,7 @@ class OcrOverlayWindow(QWidget):
 
     def _finish_ocr_cycle(self) -> None:
         if not self._interacting:
-            self._schedule_ocr_tick(self.cfg.interval_ms)
+            self._schedule_ocr_tick(self._next_ocr_delay_ms())
 
     def _on_ocr_done(self, text: str) -> None:
         try:

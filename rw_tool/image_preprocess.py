@@ -10,6 +10,15 @@ def scale_image(bgr: np.ndarray, scale: float) -> np.ndarray:
     return cv2.resize(bgr, None, fx=scale, fy=scale, interpolation=cv2.INTER_LINEAR)
 
 
+def capture_fingerprint(bgr: np.ndarray) -> int:
+    """低成本画面指纹，用于跳过未变化的 OCR。"""
+    if bgr is None or bgr.size == 0:
+        return 0
+    small = cv2.resize(bgr, (32, 16), interpolation=cv2.INTER_AREA)
+    gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
+    return hash(gray.tobytes())
+
+
 def cap_max_side(bgr: np.ndarray, max_side: int) -> np.ndarray:
     """限制最长边，避免超大 ROI 拖慢 det+rec。"""
     if max_side <= 0:

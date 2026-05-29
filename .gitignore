@@ -4,3 +4,4 @@ __pycache__/
 window_state.json
 debug_last_capture.png
 debug_last_capture.txt
+ui_gate_profile.json

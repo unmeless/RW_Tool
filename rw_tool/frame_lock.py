@@ -129,7 +129,7 @@ def apply_lock_mouse_policy(
 class AltKeyMonitor(QObject):
     """定时轮询 Alt 状态（游戏有焦点时 Qt 收不到 KeyPress）。"""
 
-    _POLL_MS = 40
+    _POLL_MS = 100
 
     def __init__(self, widgets: list[QWidget], lock_hub: FrameLockHub) -> None:
         super().__init__()
