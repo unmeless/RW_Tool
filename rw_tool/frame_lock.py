@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import QApplication, QWidget
 
 
 class FrameLockHub(QObject):
-    """Alt 临时解锁时通知各窗体刷新（默认始终锁定）。"""
+    """Caps Lock 切换解锁时通知各窗体刷新（默认锁定）。"""
 
     interaction_changed = pyqtSignal()
 
@@ -16,30 +16,28 @@ class FrameLockHub(QObject):
         self.interaction_changed.emit()
 
 
-def _win32_alt_pressed() -> bool:
+def _win32_caps_lock_on() -> bool:
     import ctypes
 
-    # VK_MENU = 左 Alt；游戏获得焦点时 Qt 收不到 KeyPress，需系统级查询
-    return bool(ctypes.windll.user32.GetAsyncKeyState(0x12) & 0x8000)
+    # VK_CAPITAL；切换键需 GetKeyState 低 bit 表示开/关
+    return bool(ctypes.windll.user32.GetKeyState(0x14) & 1)
 
 
-def alt_modifier_active() -> bool:
+def caps_lock_unlock_active() -> bool:
+    """Caps Lock 开启时 UI 解锁。"""
     if sys.platform == "win32":
-        return _win32_alt_pressed()
-    app = QApplication.instance()
-    if app is None:
-        return False
-    return bool(app.keyboardModifiers() & Qt.KeyboardModifier.AltModifier)
+        return _win32_caps_lock_on()
+    return False
 
 
 def frame_locked() -> bool:
-    """未按 Alt 时为锁定态。"""
-    return not alt_modifier_active()
+    """Caps Lock 关闭时为锁定态。"""
+    return not caps_lock_unlock_active()
 
 
 def frame_interaction_allowed() -> bool:
-    """按住 Alt 时可拖动、缩放。"""
-    return alt_modifier_active()
+    """Caps Lock 开启时可拖动、缩放。"""
+    return caps_lock_unlock_active()
 
 
 def set_window_input_passthrough(
@@ -72,7 +70,7 @@ def update_frame_lock_state(
     allowed: Iterable[QWidget],
     always_pass_through: Iterable[QWidget] | None = None,
 ) -> None:
-    """按 Alt 键更新鼠标穿透与绘制。"""
+    """按 Caps Lock 更新鼠标穿透与绘制。"""
     locked = frame_locked()
     interactive = frame_interaction_allowed()
     root.setAttribute(
@@ -126,8 +124,8 @@ def apply_lock_mouse_policy(
             child.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
 
 
-class AltKeyMonitor(QObject):
-    """定时轮询 Alt 状态（游戏有焦点时 Qt 收不到 KeyPress）。"""
+class CapsLockMonitor(QObject):
+    """定时轮询 Caps Lock（游戏有焦点时 Qt 收不到按键）。"""
 
     _POLL_MS = 100
 
@@ -135,16 +133,16 @@ class AltKeyMonitor(QObject):
         super().__init__()
         self._widgets = widgets
         self._lock_hub = lock_hub
-        self._prev_alt = alt_modifier_active()
+        self._prev_unlock = caps_lock_unlock_active()
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._on_poll)
         self._timer.start(self._POLL_MS)
 
     def _on_poll(self) -> None:
-        cur = alt_modifier_active()
-        if cur == self._prev_alt:
+        cur = caps_lock_unlock_active()
+        if cur == self._prev_unlock:
             return
-        self._prev_alt = cur
+        self._prev_unlock = cur
         for widget in self._widgets:
             widget.update()
             if frame_locked():
@@ -152,11 +150,11 @@ class AltKeyMonitor(QObject):
         self._lock_hub.notify_interaction_changed()
 
 
-def install_alt_key_monitor(
+def install_caps_lock_monitor(
     app: QApplication,
     widgets: list[QWidget],
     lock_hub: FrameLockHub,
-) -> AltKeyMonitor:
-    monitor = AltKeyMonitor(widgets, lock_hub)
+) -> CapsLockMonitor:
+    monitor = CapsLockMonitor(widgets, lock_hub)
     monitor.setParent(app)
     return monitor

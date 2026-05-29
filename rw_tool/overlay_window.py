@@ -22,10 +22,10 @@ from PyQt6.QtWidgets import (
 
 from rw_tool.config import AppConfig, load_config
 from rw_tool.frame_lock import (
-    AltKeyMonitor,
+    CapsLockMonitor,
     FrameLockHub,
     frame_interaction_allowed,
-    install_alt_key_monitor,
+    install_caps_lock_monitor,
     update_frame_lock_state,
 )
 from rw_tool.icon_panel_window import PetIconPanelWindow
@@ -135,7 +135,7 @@ class OcrOverlayWindow(QWidget):
             if self._ui_gate.sample_count:
                 print(f"[RW_Tool] UI 门控已加载 {self._ui_gate.sample_count} 条样本")
         self._lock_hub = FrameLockHub()
-        self._alt_monitor: AltKeyMonitor | None = None
+        self._lock_monitor: CapsLockMonitor | None = None
         self._match_label: QLabel | None = None
         self._result_label: QLabel | None = None
         if self.cfg.matcher_enabled:
@@ -466,11 +466,21 @@ class OcrOverlayWindow(QWidget):
 
     def close_button_rect(self) -> QRect:
         bar = self.drag_bar_rect()
-        w, h = 22, min(18, max(14, bar.height() - 4))
-        return QRect(bar.right() - w - 4, bar.top() + max(0, (bar.height() - h) // 2), w, h)
+        c = self.cfg.corner_handle_px
+        w, h = 26, min(20, max(16, bar.height() - 4))
+        # 右缘留出缩放手柄区域，避免与关闭按钮重叠
+        right_margin = max(10, c + 2)
+        x = bar.right() - w - right_margin
+        y = bar.top() + max(0, (bar.height() - h) // 2)
+        return QRect(x, y, w, h)
+
+    def _close_button_hit_rect(self) -> QRect:
+        """关闭按钮可点击区域（略大于绘制区域）。"""
+        return self.close_button_rect().adjusted(-2, -2, 2, 2)
 
     def _title_bar_right_reserved_width(self) -> int:
-        return self.close_button_rect().width() + 12
+        c = self.cfg.corner_handle_px
+        return self.close_button_rect().width() + max(14, c + 8)
 
     def move_grip_rect(self) -> QRect:
         """顶栏中央窄条：唯一可移动区域（与四角缩放分离）。"""
@@ -483,7 +493,7 @@ class OcrOverlayWindow(QWidget):
 
     def _setup_title_bar_controls(self) -> None:
         self._btn_close = QPushButton("×", self)
-        self._btn_close.setToolTip("退出 (Esc)；按住 Alt 可拖动/缩放")
+        self._btn_close.setToolTip("退出 (Esc)；Caps Lock 开启时可拖动/缩放")
         self._btn_close.setCursor(Qt.CursorShape.PointingHandCursor)
         self._btn_close.clicked.connect(self._quit_application)
         px = max(12, self.cfg.font_settings_checkbox + 2)
@@ -623,6 +633,8 @@ class OcrOverlayWindow(QWidget):
         if left and top:
             return ResizeMode.LEFT | ResizeMode.TOP
         if right and top:
+            if self._frame_interactive() and self._close_button_hit_rect().contains(pos):
+                return ResizeMode.NONE
             return ResizeMode.RIGHT | ResizeMode.TOP
         if left and bottom:
             return ResizeMode.LEFT | ResizeMode.BOTTOM
@@ -720,12 +732,16 @@ class OcrOverlayWindow(QWidget):
         handle_color = QColor(255, 160, 50, 230)
         painter.setPen(Qt.PenStyle.NoPen)
 
-        for x0, y0, dx, dy in (
+        corners = [
             (capture.left(), capture.top(), 1, 1),
             (capture.right(), capture.top(), -1, 1),
             (capture.left(), capture.bottom(), 1, -1),
             (capture.right(), capture.bottom(), -1, -1),
-        ):
+        ]
+        if self._frame_interactive() and self._btn_close.isVisible():
+            corners = [c for c in corners if c[1] != capture.top() or c[0] != capture.right()]
+
+        for x0, y0, dx, dy in corners:
             hx = x0 + (0 if dx > 0 else -arm)
             hy = y0 + (0 if dy > 0 else -arm)
             painter.fillRect(QRect(hx, hy, arm, thick), handle_color)
@@ -752,6 +768,9 @@ class OcrOverlayWindow(QWidget):
             return
         pos = event.position().toPoint()
         if not self._frame_interactive():
+            return
+        if self._btn_close.isVisible() and self._close_button_hit_rect().contains(pos):
+            super().mousePressEvent(event)
             return
         # 缩放优先（四角/边），再判定窄握把移动
         mode = self._hit_test(pos)
@@ -1024,7 +1043,7 @@ def run(config_path: Path | None = None) -> int:
     lock_targets: list = [window]
     if window._icon_panel is not None:
         lock_targets.append(window._icon_panel)
-    window._alt_monitor = install_alt_key_monitor(app, lock_targets, window._lock_hub)
+    window._lock_monitor = install_caps_lock_monitor(app, lock_targets, window._lock_hub)
     window._lock_hub.interaction_changed.connect(window._update_frame_lock_state)
     if window._icon_panel is not None:
         window._lock_hub.interaction_changed.connect(

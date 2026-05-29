@@ -350,7 +350,7 @@ class PetIconPanelWindow(QWidget):
         return QRect(0, 0, self.width(), self._DRAG_BAR_H)
 
     def _update_frame_lock_state(self) -> None:
-        """默认锁定；按住 Alt 时解锁。图标区保持可见。"""
+        """默认锁定；Caps Lock 开启时解锁。图标区保持可见。"""
         locked = frame_locked()
         apply_lock_mouse_policy(
             self,

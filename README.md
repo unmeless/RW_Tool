@@ -22,7 +22,7 @@ python main.py
 ### 交互
 
 - **默认锁定**：主框与图标条鼠标穿透，不影响游戏操作
-- **按住 Alt**：临时解锁，可拖动/缩放；主框右上角出现关闭按钮
+- **Caps Lock 开启**：临时解锁，可拖动/缩放；主框右上角出现关闭按钮
 - **Esc**：关闭（窗口有焦点时）；**Ctrl+Q**：退出
 - 几何与位置写入 `window_state.json`，下次启动恢复
 
@@ -50,7 +50,7 @@ desc.json
 main.py
 rw_tool/
   config.py
-  frame_lock.py      # Alt 锁定 / 穿透
+  frame_lock.py      # Caps Lock 锁定 / 穿透
   icon_panel_window.py
   ocr_engine.py
   overlay_window.py
